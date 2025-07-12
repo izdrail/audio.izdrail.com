@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Free Speech API</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.4.0/axios.min.js"></script>
+
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(750px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 25px 50px rgba(0,0,0,0.15);
+        }
+
+        .card h2 {
+            color: #4a5568;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .icon {
+            width: 24px;
+            height: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #4a5568;
+        }
+
+        input, textarea, select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+            background: white;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .file-input {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .file-input input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+
+        .file-input-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: #f7fafc;
+            border: 2px dashed #cbd5e0;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .file-input-label:hover {
+            background: #edf2f7;
+            border-color: #667eea;
+        }
+
+        .file-input-label.has-file {
+            background: #e6fffa;
+            border-color: #38b2ac;
+            color: #234e52;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            justify-content: center;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #718096;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background: #4a5568;
+            box-shadow: 0 10px 20px rgba(113, 128, 150, 0.3);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .alert-success {
+            background: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+
+        .alert-error {
+            background: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #fc8181;
+        }
+
+        .voice-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+
+        .voice-item {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .voice-item:hover {
+            background: #f7fafc;
+        }
+
+        .voice-item.selected {
+            background: #e6fffa;
+            color: #234e52;
+        }
+
+        .voice-item:last-child {
+            border-bottom: none;
+        }
+
+        .audio-player {
+            width: 100%;
+            margin-top: 15px;
+            border-radius: 8px;
+        }
+
+        .transcription-result {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 15px;
+        }
+
+        .transcription-result h4 {
+            color: #4a5568;
+            margin-bottom: 10px;
+        }
+
+        .transcription-text {
+            font-size: 16px;
+            line-height: 1.6;
+            color: #2d3748;
+        }
+
+        .language-badge {
+            background: #667eea;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .config-info {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            .cards-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="container">
+        <div class="header">
+            <h1>🎤 Speech API Interface</h1>
+            <p>Text-to-Speech, Voice Cloning, and Speech-to-Text</p>
+            <div class="config-info">
+                API URL: {{ apiUrl }}
+            </div>
+        </div>
+
+        <div class="cards-grid">
+            <!-- Text-to-Speech Card -->
+            <div class="card">
+                <h2>
+                    <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                    </svg>
+                    Text-to-Speech
+                </h2>
+
+                <div class="form-group">
+                    <label>Enter text to convert to speech:</label>
+                    <textarea v-model="ttsText" placeholder="Type your message here..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Select voice (optional):</label>
+                    <select v-model="selectedVoice">
+                        <option value="">Default Voice</option>
+                        <option v-for="voice in voices" :key="voice.speaker_id" :value="voice.speaker_id">
+                            {{ voice.name }}
+                        </option>
+                    </select>
+                </div>
+
+                <button class="btn" @click="generateSpeech" :disabled="!ttsText.trim() || isGenerating">
+                    <div v-if="isGenerating" class="loading"></div>
+                    <span v-else>🎵</span>
+                    {{ isGenerating ? 'Generating...' : 'Generate Speech' }}
+                </button>
+
+                <audio v-if="audioUrl" :src="audioUrl" controls class="audio-player"></audio>
+            </div>
+
+            <!-- Voice Training Card -->
+            <div class="card">
+                <h2>
+                    <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+                    </svg>
+                    Voice Training
+                </h2>
+
+                <div v-if="trainingSuccess" class="alert alert-success">
+                    Voice trained successfully! Speaker ID: {{ newSpeakerId }}
+                </div>
+
+                <div v-if="trainingError" class="alert alert-error">
+                    {{ trainingError }}
+                </div>
+
+                <div class="form-group">
+                    <label>Speaker Name:</label>
+                    <input v-model="speakerName" placeholder="Enter speaker name" />
+                </div>
+
+                <div class="form-group">
+                    <label>Audio Sample:</label>
+                    <div class="file-input">
+                        <input type="file" @change="handleFileSelect" accept="audio/*" id="audioFile" />
+                        <label for="audioFile" class="file-input-label" :class="{'has-file': selectedFile}">
+                            <span>📁</span>
+                            <span>{{ selectedFile ? selectedFile.name : 'Choose audio file' }}</span>
+                        </label>
+                    </div>
+                </div>
+
+                <button class="btn" @click="trainVoice" :disabled="!speakerName.trim() || !selectedFile || isTraining">
+                    <div v-if="isTraining" class="loading"></div>
+                    <span v-else>🎯</span>
+                    {{ isTraining ? 'Training...' : 'Train Voice' }}
+                </button>
+
+                <button class="btn btn-secondary" @click="loadVoices">
+                    🔄 Refresh Voices
+                </button>
+            </div>
+
+            <!-- Speech-to-Text Card -->
+            <div class="card">
+                <h2>
+                    <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 14l5-5 5 5z"/>
+                    </svg>
+                    Speech-to-Text
+                </h2>
+
+                <div class="form-group">
+                    <label>Audio file to transcribe:</label>
+                    <div class="file-input">
+                        <input type="file" @change="handleTranscriptionFileSelect" accept="audio/*" id="transcriptionFile" />
+                        <label for="transcriptionFile" class="file-input-label" :class="{'has-file': transcriptionFile}">
+                            <span>🎙️</span>
+                            <span>{{ transcriptionFile ? transcriptionFile.name : 'Choose audio file' }}</span>
+                        </label>
+                    </div>
+                </div>
+
+                <button class="btn" @click="transcribeAudio" :disabled="!transcriptionFile || isTranscribing">
+                    <div v-if="isTranscribing" class="loading"></div>
+                    <span v-else>📝</span>
+                    {{ isTranscribing ? 'Transcribing...' : 'Transcribe Audio' }}
+                </button>
+
+                <div v-if="transcriptionResult" class="transcription-result">
+                    <h4>Transcription Result:</h4>
+                    <div style="margin-bottom: 10px;">
+                        <span class="language-badge">{{ transcriptionResult.language }}</span>
+                    </div>
+                    <div class="transcription-text">{{ transcriptionResult.text }}</div>
+                </div>
+            </div>
+
+            <!-- Voice List Card -->
+            <div class="card">
+                <h2>
+                    <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                    </svg>
+                    Available Voices
+                </h2>
+
+                <div v-if="voices.length === 0" class="alert alert-error">
+                    No trained voices available. Train a voice first!
+                </div>
+
+                <div v-else class="voice-list">
+                    <div v-for="voice in voices" :key="voice.speaker_id"
+                         class="voice-item"
+                         :class="{'selected': selectedVoice === voice.speaker_id}"
+                         @click="selectedVoice = voice.speaker_id">
+                        <strong>{{ voice.name }}</strong>
+                        <div style="font-size: 0.9em; color: #666;">ID: {{ voice.speaker_id }}</div>
+                    </div>
+                </div>
+            </div>
+
+
+            <!-- Real-Time STT Card -->
+            <div class="card">
+                <h2>
+                    <svg class="icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+                    </svg>
+                    Real-Time STT
+                </h2>
+
+                <div class="form-group">
+                    <button class="btn" @click="toggleRealtime">
+                        <span v-if="isRealtime">⏹️ Stop</span>
+                        <span v-else>🎤 Start Real-Time STT</span>
+                    </button>
+                </div>
+
+                <div v-if="realtimeTranscript" class="transcription-result">
+                    <h4>Live Transcript:</h4>
+                    <div class="transcription-text">{{ realtimeTranscript }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp } = Vue;
+
+    createApp({
+        data() {
+            return {
+                // API URL from environment or fallback
+                apiUrl: this.getApiUrl(),
+
+                // TTS
+                ttsText: '',
+                selectedVoice: '',
+                audioUrl: null,
+                isGenerating: false,
+
+                // Voice Training
+                speakerName: '',
+                selectedFile: null,
+                isTraining: false,
+                trainingSuccess: false,
+                trainingError: '',
+                newSpeakerId: '',
+
+                // Transcription
+                transcriptionFile: null,
+                transcriptionResult: null,
+                isTranscribing: false,
+
+                // Voices
+                voices: [],
+
+                //real time
+                rtcStream: null,
+                isRealtime: false,
+                realtimeTranscript: '',
+            };
+        },
+
+        mounted() {
+            this.loadVoices();
+            this.testConnection();
+        },
+
+        methods: {
+            getApiUrl() {
+                // Try to get API URL from various sources
+
+                // 1. Check if there's a global config object (injected by server)
+                if (typeof window !== 'undefined' && window.APP_CONFIG && window.APP_CONFIG.API_URL) {
+                    return window.APP_CONFIG.API_URL;
+                }
+
+                // 2. Check meta tags
+                const apiUrlMeta = document.querySelector('meta[name="api-url"]');
+                if (apiUrlMeta) {
+                    return apiUrlMeta.getAttribute('content');
+                }
+
+                // 3. Check for environment-specific endpoints
+                const hostname = window.location.hostname;
+
+                // Docker internal networking
+                if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                    return 'http://localhost:1602';
+                }
+
+                // Production/Docker environment
+                return `http://${hostname}:1602`;
+            },
+
+            async testConnection() {
+                try {
+                    const response = await axios.get(`${this.apiUrl}/health`, {
+                        timeout: 5000,
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    });
+                    console.log('API connection successful:', response.data);
+                } catch (error) {
+                    console.error('API connection failed:', error);
+                    if (error.code === 'ERR_NETWORK') {
+                        // Try alternative URLs
+                        await this.tryAlternativeUrls();
+                    }
+                }
+            },
+
+            async tryAlternativeUrls() {
+                const alternatives = [
+                    'http://speech-api:1602',  // Docker service name
+                    'http://api:1602',         // Common Docker service name
+                    'http://localhost:1602',   // Local development
+                    'http://127.0.0.1:1602'    // Local IP
+                ];
+
+                for (const url of alternatives) {
+                    try {
+                        const response = await axios.get(`${url}/health`, {
+                            timeout: 18000,
+                            headers: {
+                                'Content-Type': 'application/json',
+                            }
+                        });
+                        console.log(`Alternative URL ${url} works:`, response.data);
+                        this.apiUrl = url;
+                        return;
+                    } catch (error) {
+                        console.log(`Alternative URL ${url} failed:`, error.message);
+                    }
+                }
+
+                alert('Cannot connect to API server. Please check if the server is running and accessible.');
+            },
+
+            async loadVoices() {
+                try {
+                    const response = await axios.get(`${this.apiUrl}/voice/list`);
+                    this.voices = response.data.voices;
+                } catch (error) {
+                    console.error('Error loading voices:', error);
+                }
+            },
+
+            async generateSpeech() {
+                if (!this.ttsText.trim()) return;
+
+                this.isGenerating = true;
+                this.audioUrl = null;
+
+                try {
+                    const response = await axios.post(`${this.apiUrl}/tts`, {
+                        text: this.ttsText,
+                        speaker_id: this.selectedVoice || null
+                    }, {
+                        responseType: 'blob',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        timeout: 1200000,
+                    });
+
+                    this.audioUrl = URL.createObjectURL(response.data);
+                } catch (error) {
+                    console.error('Error generating speech:', error);
+                    if (error.response?.status === 0 || error.code === 'ERR_NETWORK') {
+                        alert('Network error. Please check your connection and server availability.');
+                    } else {
+                        alert(`Error generating speech: ${error.response?.data?.detail || error.message}`);
+                    }
+                } finally {
+                    this.isGenerating = false;
+                }
+            },
+
+            handleFileSelect(event) {
+                this.selectedFile = event.target.files[0];
+                this.trainingSuccess = false;
+                this.trainingError = '';
+            },
+
+            async trainVoice() {
+                if (!this.speakerName.trim() || !this.selectedFile) return;
+
+                this.isTraining = true;
+                this.trainingSuccess = false;
+                this.trainingError = '';
+
+                try {
+                    const formData = new FormData();
+                    formData.append('speaker_name', this.speakerName);
+                    formData.append('audio_file', this.selectedFile);
+
+                    const response = await axios.post(`${this.apiUrl}/voice/train`, formData, {
+                        headers: {
+                            'Content-Type': 'multipart/form-data'
+                        }
+                    });
+
+                    this.newSpeakerId = response.data.speaker_id;
+                    this.trainingSuccess = true;
+                    this.speakerName = '';
+                    this.selectedFile = null;
+                    document.getElementById('audioFile').value = '';
+
+                    await this.loadVoices();
+
+                } catch (error) {
+                    console.error('Error training voice:', error);
+                    this.trainingError = error.response?.data?.detail || 'Error training voice. Please try again.';
+                } finally {
+                    this.isTraining = false;
+                }
+            },
+
+            handleTranscriptionFileSelect(event) {
+                this.transcriptionFile = event.target.files[0];
+                this.transcriptionResult = null;
+            },
+
+            async transcribeAudio() {
+                if (!this.transcriptionFile) return;
+
+                this.isTranscribing = true;
+                this.transcriptionResult = null;
+
+                try {
+                    const formData = new FormData();
+                    formData.append('audio', this.transcriptionFile);
+
+                    const response = await axios.post(`${this.apiUrl}/transcribe`, formData, {
+                        headers: {
+                            'Content-Type': 'multipart/form-data'
+                        }
+                    });
+
+                    this.transcriptionResult = response.data;
+
+                } catch (error) {
+                    console.error('Error transcribing audio:', error);
+                    alert('Error transcribing audio. Please try again.');
+                } finally {
+                    this.isTranscribing = false;
+                }
+            },
+            async toggleRealtime() {
+                if (this.isRealtime && this.rtcStream) {
+                    this.rtcStream.stop();
+                    this.isRealtime = false;
+                    return;
+                }
+
+                try {
+                    this.rtcStream = await fastrtc.stream(`${this.apiUrl}/rtc/transcribe`, {
+                        onTranscript: (data) => {
+                            if (data && data.transcript) {
+                                this.realtimeTranscript += (data.transcript + ' ');
+                            }
+                        },
+                        onError: (err) => {
+                            console.error('FastRTC error:', err);
+                            alert('Real-time transcription failed.');
+                            this.isRealtime = false;
+                        }
+                    });
+
+                    this.rtcStream.start();
+                    this.realtimeTranscript = '';
+                    this.isRealtime = true;
+                } catch (err) {
+                    console.error('Error starting FastRTC:', err);
+                    alert('Microphone access or server issue.');
+                    this.isRealtime = false;
+                }
+            }
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>

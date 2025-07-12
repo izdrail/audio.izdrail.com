@@ -1,4 +1,3 @@
-
 import os
 import re
 import tempfile
@@ -6,10 +5,9 @@ import uuid
 import shutil
 import json
 import requests
-import threading
 import time
-import queue
 from typing import List, Tuple, Optional
+from datetime import datetime
 import torch
 import numpy as np
 import gradio as gr
@@ -30,25 +28,22 @@ SPEECH_TTS_PREFIX = "speech-tts-"
 WAV_SUFFIX = ".wav"
 MP3_SUFFIX = ".mp3"
 VOICE_SAMPLES_DIR = "voice_samples"
+GENERATED_AUDIO_DIR = "generated_audio"  # NEW: Directory for saved audio
 STANDARD_VOICE_NAME = "Standard Voice (Non-Cloned)"
 os.makedirs(VOICE_SAMPLES_DIR, exist_ok=True)
+os.makedirs(GENERATED_AUDIO_DIR, exist_ok=True)  # NEW: Create directory for saved audio
 
 # Ollama Configuration
-OLLAMA_BASE_URL = "http://ollama:11434"  # Default Ollama URL
-DEFAULT_MODEL = "qwen:1.8b"  # Default model, can be changed
+OLLAMA_BASE_URL = "http://ollama:11434"
+DEFAULT_MODEL = "ALIENTELLIGENCE/imagegenaiprompter:latest"
 
-# Realtime transcription state
-realtime_transcription_active = False
-realtime_thread = None
-audio_queue = queue.Queue()
-transcription_results = []
+# Removed realtime transcription functionality
 
 # --- Model Loading ---
 print("[Gradio App] Initializing models...")
 
 # Transcription model
 try:
-    # Check for GPU availability for Whisper
     whisper_device = "cuda" if torch.cuda.is_available() else "cpu"
     whisper_model = whisper.load_model("base", device=whisper_device)
     print(f"[Gradio App] Whisper model loaded successfully on {whisper_device}.")
@@ -77,7 +72,22 @@ def preprocess_text(text: str) -> str:
     """Converts numbers in the text to words."""
     return re.sub(r'\d+', lambda m: num2words(int(m.group(0))), text)
 
-def run_voice_clone_tts_and_save_file(text: str, speaker_id: str) -> str:
+def generate_audio_filename(text: str, speaker_id: str, format: str = "mp3") -> str:
+    """Generate a unique filename for saved audio."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Create a safe filename from the first 30 characters of text
+    safe_text = re.sub(r'[^\w\s-]', '', text[:30]).strip()
+    safe_text = re.sub(r'[\s]+', '_', safe_text)
+    if not safe_text:
+        safe_text = "audio"
+
+    # Clean speaker name for filename
+    safe_speaker = re.sub(r'[^\w\s-]', '', speaker_id).replace(' ', '_')
+
+    filename = f"{timestamp}_{safe_speaker}_{safe_text}.{format}"
+    return os.path.join(GENERATED_AUDIO_DIR, filename)
+
+def run_voice_clone_tts_and_save_file(text: str, speaker_id: str, save_permanently: bool = False) -> str:
     """Generates speech using a cloned voice."""
     if voice_model is None:
         raise gr.Error("Voice cloning model (Coqui TTS) is not available. Please check logs.")
@@ -86,20 +96,30 @@ def run_voice_clone_tts_and_save_file(text: str, speaker_id: str) -> str:
     if not os.path.exists(reference_audio):
         raise gr.Error(f"Speaker ID '{speaker_id}' not found. Please train the voice first.")
 
-    tmp_path_wav = os.path.join(tempfile.gettempdir(), SPEECH_TTS_PREFIX + str(uuid.uuid4()) + WAV_SUFFIX)
+    # Choose between temporary and permanent file
+    if save_permanently:
+        output_path = generate_audio_filename(text, speaker_id, "wav")
+    else:
+        output_path = os.path.join(tempfile.gettempdir(), SPEECH_TTS_PREFIX + str(uuid.uuid4()) + WAV_SUFFIX)
 
     try:
         voice_model.tts_to_file(
             text=text,
-            file_path=tmp_path_wav,
+            file_path=output_path,
             speaker_wav=reference_audio,
-            language="en"
+            language="en",
+            temperature=0.9,
+            split_sentences=True
         )
-        return tmp_path_wav
+
+        if save_permanently:
+            print(f"[TTS] Audio saved permanently to: {output_path}")
+
+        return output_path
     except Exception as e:
         raise gr.Error(f"An error occurred during voice cloning: {str(e)}")
 
-def run_standard_tts_and_save_file(text: str) -> str:
+def run_standard_tts_and_save_file(text: str, save_permanently: bool = False) -> str:
     """Generates speech using the standard, non-cloned voice."""
     global tacotron2, hifi_gan
     if tacotron2 is None or hifi_gan is None:
@@ -114,9 +134,18 @@ def run_standard_tts_and_save_file(text: str) -> str:
     mel_outputs, _, _ = tacotron2.encode_batch([text])
     waveforms = hifi_gan.decode_batch(mel_outputs)
 
-    tmp_path_wav = os.path.join(tempfile.gettempdir(), SPEECH_TTS_PREFIX + str(uuid.uuid4()) + WAV_SUFFIX)
-    torchaudio.save(tmp_path_wav, waveforms.squeeze(1), 44100) # Use 22050 sample rate for consistency
-    return tmp_path_wav
+    # Choose between temporary and permanent file
+    if save_permanently:
+        output_path = generate_audio_filename(text, STANDARD_VOICE_NAME, "wav")
+    else:
+        output_path = os.path.join(tempfile.gettempdir(), SPEECH_TTS_PREFIX + str(uuid.uuid4()) + WAV_SUFFIX)
+
+    torchaudio.save(output_path, waveforms.squeeze(1), 22050)
+
+    if save_permanently:
+        print(f"[TTS] Audio saved permanently to: {output_path}")
+
+    return output_path
 
 # --- Ollama Integration Functions ---
 
@@ -160,7 +189,7 @@ def chat_with_ollama(message: str, model: str = DEFAULT_MODEL, conversation_hist
         print(f"[Ollama] {error_msg}")
         return error_msg, history_copy
 
-# --- Realtime Transcription Functions (Corrected) ---
+# --- Realtime Transcription Functions ---
 
 def realtime_transcription_worker():
     """Improved worker function for realtime transcription."""
@@ -168,11 +197,10 @@ def realtime_transcription_worker():
 
     buffer = []
     buffer_duration = 0
-    max_buffer_duration = 3.0  # Process every 3 seconds
+    max_buffer_duration = 3.0
 
     while realtime_transcription_active:
         try:
-            # Process all available audio in the queue
             while not audio_queue.empty():
                 audio_data = audio_queue.get_nowait()
                 if audio_data is not None:
@@ -189,7 +217,6 @@ def realtime_transcription_worker():
                     buffer_duration += len(audio_array) / sample_rate
                 audio_queue.task_done()
 
-            # Process buffer when it reaches the duration threshold
             if buffer_duration >= max_buffer_duration and buffer:
                 combined_audio = np.concatenate(buffer)
                 transcription = transcribe_audio_chunk(combined_audio)
@@ -256,14 +283,13 @@ def add_audio_to_queue(audio_data):
             audio_queue.put_nowait(audio_data)
         except queue.Full:
             pass
-    return # Explicitly return None
+    return
 
 def transcribe_audio_chunk(audio_data: np.ndarray) -> str:
     """Transcribe a chunk of audio data using Whisper."""
     if whisper_model is None:
         return "Whisper model not available"
     try:
-        # Whisper can process the numpy array directly
         result = whisper_model.transcribe(audio_data, fp16=torch.cuda.is_available())
         return result["text"].strip()
     except Exception as e:
@@ -299,8 +325,8 @@ def gradio_train_voice(speaker_name: str, audio_file_path: str) -> Tuple[str, gr
     reference_path = os.path.join(speaker_dir, "reference.wav")
 
     try:
-        audio = AudioSegment.from_file(audio_file_path)
-        audio = audio.set_frame_rate(22050).set_channels(1)
+        audio = AudioSegment.from_file(audio_file_path, set_frame_rate=44100)
+        audio = audio.set_frame_rate(44100).set_channels(2)
         audio.export(reference_path, format="wav")
 
         status_message = f"✅ Voice trained successfully!\nSpeaker ID: **{speaker_id}**"
@@ -312,39 +338,51 @@ def gradio_train_voice(speaker_name: str, audio_file_path: str) -> Tuple[str, gr
         shutil.rmtree(speaker_dir, ignore_errors=True)
         raise gr.Error(f"Voice processing failed: {str(e)}")
 
-def gradio_generate_tts(text: str, speaker_id: str) -> str:
+def gradio_generate_tts(text: str, speaker_id: str, save_audio: bool = False) -> Tuple[str, str]:
     """Main TTS function called by the Gradio interface."""
     if not text:
         raise gr.Error("Text input cannot be empty.")
 
     clean_text = preprocess_text(text.strip())
     output_files = []
+    saved_file_info = ""
 
     try:
         if speaker_id == STANDARD_VOICE_NAME:
-            # Split text into sentences for better synthesis with the standard voice
             sentences = [s.strip() for s in re.split(r'(?<=[.?!])\s+', clean_text) if s.strip()]
             if not sentences:
                 sentences = [clean_text]
             for sentence in sentences:
-                output_files.append(run_standard_tts_and_save_file(sentence))
+                output_files.append(run_standard_tts_and_save_file(sentence, save_permanently=save_audio))
         else:
-            output_files.append(run_voice_clone_tts_and_save_file(clean_text, speaker_id))
+            output_files.append(run_voice_clone_tts_and_save_file(clean_text, speaker_id, save_permanently=save_audio))
 
         if not output_files:
             raise gr.Error("TTS generation failed to produce any audio.")
 
+        # Always create a temporary combined file for playback
         combined_audio = AudioSegment.empty()
         for f in output_files:
             combined_audio += AudioSegment.from_wav(f)
 
         tmp_path_mp3 = os.path.join(tempfile.gettempdir(), SPEECH_TTS_PREFIX + str(uuid.uuid4()) + MP3_SUFFIX)
         combined_audio.export(tmp_path_mp3, format="mp3")
-        return tmp_path_mp3
+
+        # If saving permanently, also save the combined file
+        if save_audio:
+            permanent_path = generate_audio_filename(clean_text, speaker_id, "mp3")
+            combined_audio.export(permanent_path, format="mp3")
+            saved_file_info = f"✅ Audio saved to: {permanent_path}"
+            print(f"[TTS] Combined audio saved to: {permanent_path}")
+
+        return tmp_path_mp3, saved_file_info
+
     finally:
-        for f in output_files:
-            if os.path.exists(f):
-                os.remove(f)
+        # Clean up temporary files only if we're not saving permanently
+        if not save_audio:
+            for f in output_files:
+                if os.path.exists(f):
+                    os.remove(f)
 
 def gradio_transcribe(audio_filepath: str) -> Tuple[str, str]:
     """Transcribe uploaded audio to text using Whisper."""
@@ -365,24 +403,22 @@ def gradio_transcribe(audio_filepath: str) -> Tuple[str, str]:
     except Exception as e:
         raise gr.Error(f"Transcription failed: {str(e)}")
 
-def gradio_text_chat(message: str, model: str, speaker_voice: str, conversation_history: List) -> Tuple[str, str, List, str]:
+def gradio_text_chat(message: str, model: str, speaker_voice: str, save_audio: bool, conversation_history: List) -> Tuple[str, str, List, str, str]:
     """Text-based chat with Ollama, including TTS generation."""
     if not message.strip():
-        # Return gracefully instead of raising an error for empty input
-        return "", None, conversation_history, ""
+        return "", None, conversation_history, "", ""
 
     ollama_response, updated_history = chat_with_ollama(message.strip(), model, conversation_history)
     if not ollama_response or "error" in ollama_response.lower():
         gr.Warning(f"Ollama issue: {ollama_response}")
-        return ollama_response, None, updated_history, ""
+        return ollama_response, None, updated_history, "", ""
 
     try:
-        audio_response = gradio_generate_tts(ollama_response, speaker_voice)
+        audio_response, saved_info = gradio_generate_tts(ollama_response, speaker_voice, save_audio)
+        return ollama_response, audio_response, updated_history, "", saved_info
     except Exception as e:
         gr.Warning(f"TTS generation failed: {str(e)}")
-        audio_response = None # Allow chat to continue without audio
-
-    return ollama_response, audio_response, updated_history, ""
+        return ollama_response, None, updated_history, "", ""
 
 def format_conversation_history(history: List) -> str:
     """Format conversation history for display."""
@@ -397,6 +433,23 @@ def format_conversation_history(history: List) -> str:
 def clear_conversation() -> Tuple[List, str]:
     """Clear the conversation history."""
     return [], "Conversation cleared."
+
+def list_saved_audio_files() -> str:
+    """List all saved audio files."""
+    if not os.path.exists(GENERATED_AUDIO_DIR):
+        return "No saved audio files found."
+
+    files = [f for f in os.listdir(GENERATED_AUDIO_DIR) if f.endswith(('.mp3', '.wav'))]
+    if not files:
+        return "No saved audio files found."
+
+    files.sort(reverse=True)  # Most recent first
+    file_list = "\n".join([f"📁 {f}" for f in files[:20]])  # Show last 20 files
+
+    if len(files) > 20:
+        file_list += f"\n... and {len(files) - 20} more files"
+
+    return f"**Saved Audio Files ({len(files)} total):**\n\n{file_list}"
 
 # --- Gradio UI Layout ---
 with gr.Blocks(theme=gr.themes.Soft(), title="Speech API with Ollama Chat") as demo:
@@ -425,6 +478,10 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Speech API with Ollama Chat") as d
                         value=STANDARD_VOICE_NAME,
                         interactive=True
                     )
+                    text_chat_save_audio = gr.Checkbox(
+                        label="Save AI responses as audio files",
+                        value=False
+                    )
                     text_chat_input = gr.Textbox(
                         label="Your Message",
                         placeholder="Type your message here and press Enter...",
@@ -438,40 +495,9 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Speech API with Ollama Chat") as d
                 with gr.Column(scale=2):
                     text_chat_response = gr.Textbox(label="AI Response", lines=6, interactive=False)
                     text_chat_audio_output = gr.Audio(label="AI Voice Response", type="filepath", autoplay=True)
+                    text_chat_save_info = gr.Textbox(label="Save Status", interactive=False, visible=False)
 
             text_chat_conversation_display = gr.Markdown(label="Conversation History", value="No conversation yet.")
-
-        # --- Realtime Transcription Tab (Corrected) ---
-        with gr.TabItem("📡 Realtime Transcription"):
-            gr.Markdown("## Live Speech-to-Text")
-            gr.Markdown("Click 'Start Realtime' and speak into your microphone. Click 'Refresh' to see the transcribed text.")
-
-            with gr.Row():
-                with gr.Column(scale=1):
-                    realtime_audio_input = gr.Audio(
-                        label="Live Audio Input",
-                        sources=["microphone"],
-                        type="numpy",
-                        streaming=True
-                    )
-                    with gr.Row():
-                        start_realtime_button = gr.Button("🎙️ Start Realtime", variant="primary")
-                        stop_realtime_button = gr.Button("⏹️ Stop", variant="secondary")
-                        refresh_results_button = gr.Button("🔄 Refresh Results", variant="secondary")
-
-                    realtime_status = gr.Textbox(
-                        label="Status",
-                        value="Ready to start realtime transcription.",
-                        interactive=False
-                    )
-
-                with gr.Column(scale=2):
-                    realtime_transcription_output = gr.Textbox(
-                        label="Live Transcription Results",
-                        lines=10,
-                        interactive=False,
-                        placeholder="Transcribed text will appear here..."
-                    )
 
         # --- TTS Tab ---
         with gr.TabItem("🔊 Text-to-Speech (TTS)"):
@@ -484,9 +510,24 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Speech API with Ollama Chat") as d
                         value=STANDARD_VOICE_NAME,
                         interactive=True
                     )
+                    tts_save_audio = gr.Checkbox(
+                        label="Save generated audio to file",
+                        value=False
+                    )
                     tts_generate_button = gr.Button("Generate Speech", variant="primary")
                 with gr.Column(scale=1):
                     tts_audio_output = gr.Audio(label="Generated Audio", type="filepath")
+                    tts_save_info = gr.Textbox(label="Save Status", interactive=False, visible=False)
+
+        # --- Audio Files Management Tab ---
+        with gr.TabItem("📁 Saved Audio Files"):
+            gr.Markdown("## Manage Your Saved Audio Files")
+            gr.Markdown("View and manage all your saved audio files.")
+
+            with gr.Row():
+                refresh_files_button = gr.Button("🔄 Refresh File List", variant="secondary")
+
+            saved_files_display = gr.Markdown(value="Click 'Refresh File List' to see your saved audio files.")
 
         # --- Voice Training Tab ---
         with gr.TabItem("🎙️ Voice Training"):
@@ -509,39 +550,54 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Speech API with Ollama Chat") as d
                 transcribe_text_output = gr.Textbox(label="Transcription Result", lines=8, interactive=False)
 
     # --- Event Handlers ---
-    def chat_and_update(message, model, speaker, history):
-        response, audio, updated_history, new_input = gradio_text_chat(message, model, speaker, history)
-        return response, audio, updated_history, new_input, format_conversation_history(updated_history)
+    def chat_and_update(message, model, speaker, save_audio, history):
+        response, audio, updated_history, new_input, save_info = gradio_text_chat(message, model, speaker, save_audio, history)
+        return response, audio, updated_history, new_input, format_conversation_history(updated_history), save_info
+
+    def show_save_info(save_audio):
+        return gr.Textbox(visible=save_audio)
 
     text_chat_button.click(
         fn=chat_and_update,
-        inputs=[text_chat_input, text_chat_model_dropdown, text_chat_speaker_dropdown, text_chat_state],
-        outputs=[text_chat_response, text_chat_audio_output, text_chat_state, text_chat_input, text_chat_conversation_display],
+        inputs=[text_chat_input, text_chat_model_dropdown, text_chat_speaker_dropdown, text_chat_save_audio, text_chat_state],
+        outputs=[text_chat_response, text_chat_audio_output, text_chat_state, text_chat_input, text_chat_conversation_display, text_chat_save_info],
         api_name="text_chat"
     )
     text_chat_input.submit(
         fn=chat_and_update,
-        inputs=[text_chat_input, text_chat_model_dropdown, text_chat_speaker_dropdown, text_chat_state],
-        outputs=[text_chat_response, text_chat_audio_output, text_chat_state, text_chat_input, text_chat_conversation_display],
+        inputs=[text_chat_input, text_chat_model_dropdown, text_chat_speaker_dropdown, text_chat_save_audio, text_chat_state],
+        outputs=[text_chat_response, text_chat_audio_output, text_chat_state, text_chat_input, text_chat_conversation_display, text_chat_save_info],
         api_name="text_chat_submit"
     )
     text_chat_clear_button.click(
         fn=clear_conversation,
         outputs=[text_chat_state, text_chat_conversation_display]
     )
+    text_chat_save_audio.change(
+        fn=show_save_info,
+        inputs=[text_chat_save_audio],
+        outputs=[text_chat_save_info]
+    )
 
-    # Realtime Transcription Tab (Corrected)
-    start_realtime_button.click(fn=start_realtime_transcription, outputs=[realtime_status])
-    stop_realtime_button.click(fn=stop_realtime_transcription, outputs=[realtime_status])
-    refresh_results_button.click(fn=get_realtime_transcription_results, outputs=[realtime_transcription_output])
-    realtime_audio_input.stream(fn=add_audio_to_queue, inputs=[realtime_audio_input])
+    # Realtime Transcription Tab - REMOVED
 
     # TTS Tab
     tts_generate_button.click(
         fn=gradio_generate_tts,
-        inputs=[tts_text_input, tts_speaker_dropdown],
-        outputs=[tts_audio_output],
+        inputs=[tts_text_input, tts_speaker_dropdown, tts_save_audio],
+        outputs=[tts_audio_output, tts_save_info],
         api_name="tts"
+    )
+    tts_save_audio.change(
+        fn=show_save_info,
+        inputs=[tts_save_audio],
+        outputs=[tts_save_info]
+    )
+
+    # Audio Files Management Tab
+    refresh_files_button.click(
+        fn=list_saved_audio_files,
+        outputs=[saved_files_display]
     )
 
     # Voice Training Tab

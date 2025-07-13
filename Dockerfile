@@ -33,20 +33,11 @@ RUN pip install --no-cache-dir -r requirements.txt gradio moviepy
 # Pre-download the XTTS model during build
 RUN python3 -c "import os; os.environ['COQUI_TOS_AGREED'] = '1'; from TTS.api import TTS; import torch; print('Pre-downloading XTTS model...'); tts = TTS('tts_models/multilingual/multi-dataset/xtts_v2'); print('XTTS model downloaded successfully!')"
 
-# Copy the model download
-COPY download_model.py .
-
-# Pre-download the XTTS model during build
-RUN python3 download_model.py
-
-
-
-
 # Copy Supervisor config
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Expose the port
-EXPOSE 1602 1603
+EXPOSE 1602
 
 # Copy application code
 COPY . .

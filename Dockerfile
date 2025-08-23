@@ -28,7 +28,7 @@ RUN apt-get update && apt-get upgrade -y && \
 
 # Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gradio moviepy
+RUN pip install --no-cache-dir -r requirements.txt gradio moviepy fastrtc sphn onnxruntime
 
 # Pre-download the XTTS model during build
 RUN python3 -c "import os; os.environ['COQUI_TOS_AGREED'] = '1'; from TTS.api import TTS; import torch; print('Pre-downloading XTTS model...'); tts = TTS('tts_models/multilingual/multi-dataset/xtts_v2'); print('XTTS model downloaded successfully!')"

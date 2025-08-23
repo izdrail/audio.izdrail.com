@@ -4,5 +4,57 @@
     "description": "Default synthetic voice",
     "type": "standard",
     "enabled": true
+  },
+  "therussian": {
+    "name": "TheRussian",
+    "description": "Custom uploaded voice",
+    "type": "cloned",
+    "enabled": true,
+    "created_at": "2025-08-23T06:11:28.506897",
+    "metadata": {
+      "original_file": "yt1znet-the-eu-s-hypocrisy-is-getting-bad-320-kbps_PIPSjwta.mp3",
+      "duration": 90.74,
+      "sample_rate": 22050,
+      "validation_info": "Valid audio: 90.7s, 44100Hz"
+    }
+  },
+  "stefan22222": {
+    "name": "Stefan22222",
+    "description": "Custom uploaded voice",
+    "type": "cloned",
+    "enabled": true,
+    "created_at": "2025-08-23T06:25:59.776375",
+    "metadata": {
+      "original_file": "audio.wav",
+      "duration": 35.76,
+      "sample_rate": 22050,
+      "validation_info": "Valid audio: 35.8s, 44100Hz"
+    }
+  },
+  "balds": {
+    "name": "balds",
+    "description": "Custom uploaded voice",
+    "type": "cloned",
+    "enabled": true,
+    "created_at": "2025-08-23T06:55:59.586603",
+    "metadata": {
+      "original_file": "yt1znet-the-eu-s-hypocrisy-is-getting-bad-320-kbps_PIPSjwta.mp3",
+      "duration": 90.74,
+      "sample_rate": 22050,
+      "validation_info": "Valid audio: 90.7s, 44100Hz"
+    }
+  },
+  "britishwomen": {
+    "name": "BritishWomen",
+    "description": "Custom uploaded voice",
+    "type": "cloned",
+    "enabled": true,
+    "created_at": "2025-08-23T07:29:04.004547",
+    "metadata": {
+      "original_file": "britishWomenTrain.mp3",
+      "duration": 99.3,
+      "sample_rate": 22050,
+      "validation_info": "Valid audio: 99.3s, 44100Hz"
+    }
   }
 }

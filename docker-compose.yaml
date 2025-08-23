@@ -21,7 +21,7 @@ services:
       LARAVEL_SAIL: 1
       IGNITION_LOCAL_SITES_PATH: '${PWD}'
       OLLAMA_BASE_URL: 'http://ollama:11434'
-      OLLAMA_MODEL: 'qwen:1.8b'
+      OLLAMA_MODEL: 'deepseek-r1:7b'
     volumes:
       - '.:/app'
     networks:
@@ -40,14 +40,6 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - sail
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
 volumes:
   ollama_data:
     driver: local

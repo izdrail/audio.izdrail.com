@@ -56,5 +56,18 @@
       "sample_rate": 22050,
       "validation_info": "Valid audio: 99.3s, 44100Hz"
     }
+  },
+  "codergirl": {
+    "name": "CoderGirl",
+    "description": "Custom uploaded voice",
+    "type": "cloned",
+    "enabled": true,
+    "created_at": "2025-08-23T07:44:10.248063",
+    "metadata": {
+      "original_file": "Vibe Code 128 KBps.mp3",
+      "duration": 51.687619047619044,
+      "sample_rate": 22050,
+      "validation_info": "Valid audio: 51.7s, 44100Hz"
+    }
   }
 }

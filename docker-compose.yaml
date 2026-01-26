@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   audio.izdrail.com:
     build:
@@ -20,29 +18,11 @@ services:
       WWWGROUP: '${WWWGROUP}'
       LARAVEL_SAIL: 1
       IGNITION_LOCAL_SITES_PATH: '${PWD}'
-      OLLAMA_BASE_URL: 'http://ollama:11434'
-      OLLAMA_MODEL: 'deepseek-r1:7b'
     volumes:
       - '.:/app'
     networks:
       - sail
-    depends_on:
-      - ollama
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - '11434:11434'
-    environment:
-      - OLLAMA_ORIGINS=*
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - sail
-volumes:
-  ollama_data:
-    driver: local
 
 networks:
   sail:

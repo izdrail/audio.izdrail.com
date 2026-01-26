@@ -1,4 +1,13 @@
 import os
+import transformers
+# --- Transformers 4.40+ Compatibility Monkeypatch for Coqui TTS ---
+if not hasattr(transformers, "BeamSearchScorer"):
+    try:
+        import transformers.generation.beam_search as bs
+        transformers.BeamSearchScorer = bs.BeamSearchScorer
+    except ImportError:
+        pass
+# ------------------------------------------------------------------
 import re
 import uuid
 import tempfile
@@ -15,14 +24,29 @@ import numpy as np
 from numpy import ndarray
 from pathlib import Path
 
+# --- Gradio 4 Compatibility Shim ---
+if not hasattr(gr, "Sidebar"):
+    class SidebarShim(gr.Column):
+        def __init__(self, *args, **kwargs):
+            kwargs.pop("position", None)
+            super().__init__(*args, **kwargs)
+    gr.Sidebar = SidebarShim
+
 # Audio imports
 import torchaudio
-from speechbrain.pretrained import Tacotron2, HIFIGAN
+try:
+    from speechbrain.inference.TTS import Tacotron2
+    from speechbrain.inference.vocoders import HIFIGAN
+except ImportError as e:
+    logger.error(f"Failed to import SpeechBrain inference modules: {e}")
+    logger.error("Please ensure 'speechbrain' is installed correctly and all dependencies like 'torchvision' are available.")
+    Tacotron2 = None
+    HIFIGAN = None
 from TTS.api import TTS
+from fastrtc import Stream, ReplyOnPause, WebRTC, AdditionalOutputs, get_stt_model, get_tts_model
+import torch
 
-# FastRTC imports (replacing WebRTC and Moshi)
-from fastrtc import ReplyOnPause, Stream
-import sphn
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,8 +54,8 @@ logger = logging.getLogger(__name__)
 
 # --- Enhanced Constants ---
 class Config:
-    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
-    DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:7b")
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ai.izdrail.com")
+    DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "mistral:7b")
     VOICE_SAMPLES_DIR = Path("voice_samples")
     GENERATED_AUDIO_DIR = Path("generated_audio")
     STANDARD_VOICE_NAME = "standard"
@@ -268,13 +292,32 @@ class OllamaChat:
     def get_model_info(self) -> Dict:
         """Get information about the current model"""
         try:
-            response = self.session.get(f"{self.base_url}/api/show",
-                                      params={"name": self.default_model})
+            # Add trailing slash to avoid redirection that might change POST to GET
+            url = f"{self.base_url}/api/show/"
+            print(f"DEBUG_LLM: Performing POST to {url} with json: {{'name': '{self.default_model}'}}", flush=True)
+            response = self.session.post(url, json={"name": self.default_model})
+            print(f"DEBUG_LLM: Received {response.status_code} for {response.url}", flush=True)
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"Error getting model info: {e}")
+            print(f"DEBUG_LLM: Error getting model info: {e}", flush=True)
             return {}
+
+    def get_available_models(self) -> List[str]:
+        """Get list of available models from the server"""
+        try:
+            response = self.session.get(f"{self.base_url}/api/tags")
+            response.raise_for_status()
+            models = [m["name"] for m in response.json().get("models", [])]
+            return models
+        except Exception as e:
+            logger.error(f"Error getting available models: {e}")
+            return [self.default_model]
+
+    def set_model(self, model_name: str):
+        """Set the model to use"""
+        self.default_model = model_name
+        logger.info(f"Chat model set to: {model_name}")
 
 # --- Enhanced TTS Generator ---
 class TTSGenerator:
@@ -421,107 +464,9 @@ class TTSGenerator:
             raise
 
 # --- Enhanced Voice Chat Handler (Global Instance) ---
-class EnhancedVoiceChatHandler:
-    def __init__(self):
-        self.chat_engine = OllamaChat()
-        self.tts_generator = TTSGenerator()
-        self.default_voice = "standard"
-        self.stt_enabled = True
-        self.max_response_length = 200
+# --- Enhanced Helper Functions ---
 
-    def set_voice(self, voice_id: str):
-        """Set the voice for TTS responses"""
-        self.default_voice = voice_id
-        logger.info(f"Chat voice updated to: {voice_id}")
 
-    def set_settings(self, stt_enabled: bool, max_response_length: int):
-        """Update chat settings"""
-        self.stt_enabled = stt_enabled
-        self.max_response_length = max_response_length
-        logger.info(f"Chat settings updated: STT={stt_enabled}, Max length={max_response_length}")
-
-    def process_audio_to_text(self, audio_array: np.ndarray, sample_rate: int) -> str:
-        """Convert audio to text using speech recognition (placeholder implementation)"""
-        # In a real implementation, you would use a speech recognition service
-        # like Whisper, Google Speech-to-Text, or similar
-        logger.info(f"Processing audio for STT: sample_rate={sample_rate}, shape={audio_array.shape}")
-
-        # Placeholder - replace with actual STT implementation
-        return "Hello, I'm processing your voice input through the AI system."
-
-    def generate_response(self, sample_rate: int, audio_array: np.ndarray):
-        """Enhanced response generation with full STT->LLM->TTS pipeline"""
-        try:
-            if not self.stt_enabled:
-                # If STT is disabled, just return an acknowledgment
-                response_text = "Voice chat is active. Speech-to-text is currently disabled."
-            else:
-                # Convert speech to text
-                user_text = self.process_audio_to_text(audio_array, sample_rate)
-                logger.info(f"STT Result: {user_text}")
-
-                # Generate AI response
-                ai_response = self.chat_engine.chat(user_text)
-
-                # Limit response length
-                words = ai_response.split()
-                if len(words) > self.max_response_length:
-                    ai_response = " ".join(words[:self.max_response_length]) + "..."
-
-                response_text = ai_response
-
-            # Generate TTS audio
-            try:
-                audio_file = self.tts_generator.generate_audio(response_text, self.default_voice)
-                waveform, file_sample_rate = torchaudio.load(str(audio_file))
-
-                # Resample if necessary
-                if file_sample_rate != sample_rate:
-                    resampler = torchaudio.transforms.Resample(file_sample_rate, sample_rate)
-                    waveform = resampler(waveform)
-
-                # Convert to numpy and yield in chunks
-                audio_data = waveform.squeeze().numpy()
-                chunk_size = 1024
-
-                for i in range(0, len(audio_data), chunk_size):
-                    chunk = audio_data[i:i + chunk_size]
-                    if len(chunk) < chunk_size:
-                        chunk = np.pad(chunk, (0, chunk_size - len(chunk)), mode='constant')
-                    yield chunk.astype(np.float32)
-
-            except Exception as e:
-                logger.error(f"Error in TTS generation: {e}")
-                # Yield silence on TTS error
-                silence = np.zeros(1024, dtype=np.float32)
-                for _ in range(10):
-                    yield silence
-
-        except Exception as e:
-            logger.error(f"Error in enhanced voice chat handler: {e}")
-            # Yield silence on any error
-            silence = np.zeros(1024, dtype=np.float32)
-            for _ in range(5):
-                yield silence
-
-# Create global handler instance
-global_voice_chat_handler = EnhancedVoiceChatHandler()
-
-def create_voice_chat_response_handler():
-    """Create the response handler for FastRTC"""
-    def response(audio: tuple[int, np.ndarray]):
-        sample_rate, audio_array = audio
-        for audio_chunk in global_voice_chat_handler.generate_response(sample_rate, audio_array):
-            yield (sample_rate, audio_chunk)
-
-    return response
-
-# Initialize FastRTC stream
-voice_chat_stream = Stream(
-    handler=ReplyOnPause(create_voice_chat_response_handler()),
-    modality="audio",
-    mode="send-receive"
-)
 
 # --- Enhanced Helper Functions ---
 def validate_audio_file(file_path: str) -> Tuple[bool, str]:
@@ -560,31 +505,7 @@ def validate_audio_file(file_path: str) -> Tuple[bool, str]:
         return False, f"Validation error: {str(e)}"
 
 # --- UI Helper Functions (Enhanced) ---
-def generate_script(topic):
-    """Generate script with better validation"""
-    if not topic or not topic.strip():
-        return "❌ Please enter a topic first!"
-
-    if len(topic) > 200:
-        return "❌ Topic too long! Please keep it under 200 characters."
-
-    try:
-        prompt = f"""Generate a compelling and fast-paced video script about: {topic}
-
-Please create a script that:
-- Is engaging and informative
-- Has a clear structure (intro, main points, conclusion)
-- Is suitable for text-to-speech conversion
-- Is approximately 200-500 words
-- Uses natural, conversational language
-
-Topic: {topic}"""
-
-        result = chat_engine.chat(prompt)
-        return result if result else "❌ No response generated. Please try again."
-    except Exception as e:
-        logger.error(f"Script generation error: {e}")
-        return f"❌ Error generating script: {str(e)}"
+# --- Removed Script Generation (Replaced by FastRTC) ---
 
 def generate_audio_wrapper(text, voice_display_name):
     """Enhanced audio generation wrapper"""
@@ -690,10 +611,68 @@ def reset_chat():
     chat_engine.reset_history()
     return "✅ Chat history reset successfully!"
 
-# --- Global instances ---
 voice_manager = VoiceManager()
 chat_engine = OllamaChat()
 tts = TTSGenerator()
+
+# --- FastRTC Voice Chat Handler ---
+def voice_chat_response_handler(audio: Tuple[int, np.ndarray], *args):
+    """Real-time voice-to-voice handler for FastRTC"""
+    try:
+        # In inputs=[webrtc_component, chat_voice_dropdown]:
+        # args[0] is webrtc_component value
+        # args[1] is chat_voice_dropdown value
+        voice_display_name = args[1] if len(args) > 1 else "🎤 Standard Voice"
+        print(f"DEBUG_RTC: Handler received {len(args)} extra args. voice={voice_display_name}", flush=True)
+        
+        sample_rate, audio_data = audio
+        
+        # 1. STT (Speech to Text)
+        stt_model = get_stt_model()
+        user_text = stt_model.stt(sample_rate, audio_data)
+        logger.info(f"FastRTC STT: {user_text}")
+        
+        if not user_text.strip():
+            yield None, AdditionalOutputs(None)
+            return
+
+        # 2. LLM Response
+        ai_response = chat_engine.chat(user_text)
+        logger.info(f"FastRTC LLM: {ai_response}")
+
+        # 3. TTS (Text to Speech)
+        voice_id = voice_manager.get_voice_id_from_display(voice_display_name)
+        audio_path = tts.generate_audio(ai_response, voice_id)
+        
+        # Load the generated audio
+        waveform, file_sample_rate = torchaudio.load(str(audio_path))
+        yield (file_sample_rate, waveform.squeeze().numpy()), AdditionalOutputs(ai_response)
+        
+    except Exception as e:
+        logger.error(f"FastRTC error: {e}")
+        yield None, AdditionalOutputs(f"Error: {str(e)}")
+
+# Define additional inputs/outputs for the stream
+chat_voice_dropdown = gr.Dropdown(
+    label="🎭 Chat Voice",
+    choices=voice_manager.get_voice_display_names(),
+    value=voice_manager.get_voice_display_names()[0] if voice_manager.get_voice_display_names() else None,
+    render=False
+)
+ai_response_textbox = gr.Textbox(label="Last AI Response", render=False)
+
+# Define the speech handler
+voice_chat_handler = ReplyOnPause(voice_chat_response_handler)
+
+# Initialize FastRTC Stream
+voice_chat_stream = Stream(
+    handler=voice_chat_handler,
+    modality="audio",
+    mode="send-receive",
+    additional_inputs=[chat_voice_dropdown],
+    additional_outputs=[ai_response_textbox],
+    additional_outputs_handler=lambda x: x
+)
 
 # --- Enhanced Gradio Interface ---
 def create_interface():
@@ -779,37 +758,29 @@ def create_interface():
                         status_output = gr.Markdown("")
                         clear_audio_btn = gr.Button("🗑️ Clear Audio", size="sm")
 
-            # --- Script Generation Tab ---
-            with gr.Tab("📝 AI Script Writer", elem_id="script-tab"):
+            # --- Live Voice Chat Tab ---
+            with gr.Tab("🎙️ Live Voice Chat", elem_id="voice-chat-tab"):
+                gr.Markdown("### 🔊 Real-Time Conversation")
+                gr.Markdown("Speak and the AI will respond in real-time. Turn-taking is handled automatically.")
+                
                 with gr.Row():
-                    with gr.Column():
-                        gr.Markdown("### 🎬 Script Generation")
-                        gr.Markdown("Generate compelling scripts using AI for your TTS projects")
-
-                        topic_input = gr.Textbox(
-                            label="Topic or Subject",
-                            placeholder="e.g., 'The benefits of renewable energy'",
-                            lines=2
+                    with gr.Column(scale=2):
+                        webrtc_component = WebRTC(
+                            label="Conversation Control",
+                            rtc_configuration=voice_chat_stream.rtc_configuration,
+                            mode="send-receive",
+                            modality="audio"
                         )
+                    with gr.Column(scale=1):
+                        chat_voice_dropdown.render()
+                        ai_response_textbox.render()
 
-                        with gr.Row():
-                            generate_script_btn = gr.Button(
-                                "✨ Generate Script",
-                                variant="primary",
-                                size="lg"
-                            )
-                            reset_chat_btn = gr.Button("🔄 Reset Chat", size="sm")
-
-                        generated_script = gr.Textbox(
-                            label="Generated Script",
-                            lines=15,
-                            max_lines=20,
-                            placeholder="Your AI-generated script will appear here..."
-                        )
-
-                        with gr.Row():
-                            copy_to_tts_btn = gr.Button("📋 Use in TTS", variant="secondary")
-                            clear_script_btn = gr.Button("🗑️ Clear Script", size="sm")
+                webrtc_component.stream(
+                    fn=voice_chat_handler,
+                    inputs=[webrtc_component, chat_voice_dropdown],
+                    outputs=[webrtc_component, ai_response_textbox],
+                    time_limit=90
+                )
 
             # --- Voice Management Tab ---
             with gr.Tab("🎭 Voice Cloning", elem_id="voice-tab"):
@@ -860,58 +831,7 @@ def create_interface():
                             refresh_voice_list_btn = gr.Button("🔄 Refresh List", size="sm")
                             delete_voice_btn = gr.Button("🗑️ Delete Selected", size="sm", variant="stop")
 
-            # --- Voice Chat Tab (Updated with FastRTC) ---
-            with gr.Tab("🎤 Live Voice Chat", elem_id="chat-tab"):
-                gr.Markdown("### 🗣️ Real-time Voice Conversation with FastRTC")
-                gr.Markdown("Have a live conversation with AI using FastRTC for low-latency audio streaming")
 
-                with gr.Row():
-                    with gr.Column():
-                        # FastRTC Stream component
-                        voice_chat_interface = gr.Interface(
-                            fn=lambda audio: voice_chat_stream.handler.handler(audio),
-                            inputs=gr.Audio(sources=["microphone"], streaming=True),
-                            outputs=gr.Audio(streaming=True),
-                            live=True,
-                            title="FastRTC Voice Chat",
-                            description="Click the microphone to start talking"
-                        )
-
-                        chat_status = gr.Markdown("Ready for voice chat - click microphone to begin")
-
-                    with gr.Column():
-                        gr.Markdown("### 💡 Voice Chat Tips")
-                        gr.Markdown("""
-                        - Speak clearly and at normal pace
-                        - Wait for the AI to finish responding
-                        - Use a good quality microphone for best results
-                        - Ensure stable internet connection
-                        - The system uses FastRTC for low-latency streaming
-                        """)
-
-                        gr.Markdown("### 🔧 Voice Chat Settings")
-
-                        chat_voice_dropdown = gr.Dropdown(
-                            label="Response Voice",
-                            choices=voice_manager.get_voice_display_names(),
-                            value="🎤 Standard Voice",
-                            info="Select which voice to use for AI responses"
-                        )
-
-                        enable_stt = gr.Checkbox(
-                            label="Enable Speech-to-Text",
-                            value=True,
-                            info="Convert your speech to text for processing"
-                        )
-
-                        response_length = gr.Slider(
-                            label="Max Response Length",
-                            minimum=50,
-                            maximum=500,
-                            value=200,
-                            step=50,
-                            info="Maximum words in AI response"
-                        )
 
             # --- Settings Tab ---
             with gr.Tab("⚙️ Settings", elem_id="settings-tab"):
@@ -919,10 +839,12 @@ def create_interface():
                     with gr.Column():
                         gr.Markdown("### 🔧 Application Settings")
 
-                        model_info = gr.Textbox(
-                            label="Current AI Model",
+                        model_selector = gr.Dropdown(
+                            label="AI Model",
+                            choices=chat_engine.get_available_models(),
                             value=Config.DEFAULT_MODEL,
-                            interactive=False
+                            interactive=True,
+                            allow_custom_value=False
                         )
 
                         ollama_url = gr.Textbox(
@@ -990,31 +912,7 @@ def create_interface():
             outputs=[audio_output, status_output]
         )
 
-        # Script generation
-        generate_script_btn.click(
-            fn=generate_script,
-            inputs=[topic_input],
-            outputs=[generated_script]
-        )
-
-        reset_chat_btn.click(
-            fn=reset_chat,
-            outputs=[status_output]
-        )
-
-        copy_to_tts_btn.click(
-            fn=lambda script: script,
-            inputs=[generated_script],
-            outputs=[text_input]
-        ).then(
-            fn=lambda: "✅ Script copied to TTS input!",
-            outputs=[status_output]
-        )
-
-        clear_script_btn.click(
-            fn=lambda: "",
-            outputs=[generated_script]
-        )
+        # Reset chat handler removed (now part of Live Voice Chat stream if needed)
 
         # Voice cloning
         upload_voice_btn.click(
@@ -1039,10 +937,10 @@ def create_interface():
                 results.append(f"❌ Ollama: {str(e)}")
 
             # Test FastRTC (basic check)
-            try:
-                results.append("✅ FastRTC: Available")
-            except Exception as e:
-                results.append(f"❌ FastRTC: {str(e)}")
+            # try:
+            #     results.append("✅ FastRTC: Available")
+            # except Exception as e:
+            #     results.append(f"❌ FastRTC: {str(e)}")
 
             return "\n".join(results)
 
@@ -1055,7 +953,6 @@ def create_interface():
                     "voice_samples": len(list(Config.VOICE_SAMPLES_DIR.iterdir())),
                     "chat_history_length": len(chat_engine.history),
                     "model_info": chat_engine.get_model_info().get("details", {}),
-                    "fastrtc_status": "Active",
                     "audio_streaming": "Enabled"
                 }
                 return stats
@@ -1098,7 +995,7 @@ def create_interface():
                     "settings": {
                         "ollama_url": Config.OLLAMA_BASE_URL,
                         "model": Config.DEFAULT_MODEL,
-                        "audio_backend": "FastRTC"
+                        # "audio_backend": "FastRTC"
                     },
                     "exported_at": datetime.now().isoformat()
                 }
@@ -1115,19 +1012,20 @@ def create_interface():
             """Update the voice used for chat responses"""
             try:
                 voice_id = voice_manager.get_voice_id_from_display(voice_display_name)
-                # Update the global voice chat handler
-                global_voice_chat_handler.set_voice(voice_id)
+                # global_voice_chat_handler.set_voice(voice_id)
                 return f"✅ Chat voice updated to: {voice_display_name}"
             except Exception as e:
                 return f"❌ Error updating chat voice: {str(e)}"
 
-        def update_chat_settings(stt_enabled, response_length):
-            """Update chat settings"""
+
+
+        def update_ai_model(model_name):
+            """Update the AI model"""
             try:
-                global_voice_chat_handler.set_settings(stt_enabled, response_length)
-                return f"✅ Chat settings updated: STT={'Enabled' if stt_enabled else 'Disabled'}, Max length={response_length}"
+                chat_engine.set_model(model_name)
+                return f"✅ Model updated to: {model_name}"
             except Exception as e:
-                return f"❌ Error updating chat settings: {str(e)}"
+                return f"❌ Error updating model: {str(e)}"
 
         # Settings event handlers
         test_connection_btn.click(
@@ -1155,32 +1053,22 @@ def create_interface():
             outputs=[connection_status]
         )
 
-        # Voice chat settings
-        chat_voice_dropdown.change(
-            fn=update_chat_voice,
-            inputs=[chat_voice_dropdown],
-            outputs=[chat_status]
-        )
 
-        enable_stt.change(
-            fn=lambda stt, length: update_chat_settings(stt, length),
-            inputs=[enable_stt, response_length],
-            outputs=[chat_status]
-        )
 
-        response_length.change(
-            fn=lambda length, stt: update_chat_settings(stt, length),
-            inputs=[response_length, enable_stt],
-            outputs=[chat_status]
+        model_selector.change(
+            fn=update_ai_model,
+            inputs=[model_selector],
+            outputs=[connection_status]
         )
 
         # Initialize interface with current data
         interface.load(
             fn=lambda: (
                 update_voice_list(),
-                get_system_stats()
+                get_system_stats(),
+                gr.Dropdown(choices=chat_engine.get_available_models())
             ),
-            outputs=[voice_list, stats_display]
+            outputs=[voice_list, stats_display, model_selector]
         )
 
     return interface
@@ -1216,10 +1104,10 @@ def main():
             logger.warning(f"⚠️ Ollama connection failed: {e}")
 
         # Initialize FastRTC components
-        try:
-            logger.info("✅ FastRTC components initialized")
-        except Exception as e:
-            logger.error(f"❌ FastRTC initialization failed: {e}")
+        # try:
+        #     logger.info("✅ FastRTC components initialized")
+        # except Exception as e:
+        #     logger.error(f"❌ FastRTC initialization failed: {e}")
 
         logger.info("System validation complete")
 

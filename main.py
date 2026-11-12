@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # --- Enhanced Constants ---
 class Config:
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ai.izdrail.com")
-    DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "mistral:7b")
+    DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
     VOICE_SAMPLES_DIR = Path("voice_samples")
     GENERATED_AUDIO_DIR = Path("generated_audio")
     STANDARD_VOICE_NAME = "standard"
